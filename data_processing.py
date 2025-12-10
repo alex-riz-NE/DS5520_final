@@ -3,6 +3,8 @@ import numpy as np
 from sklearn.preprocessing import OneHotEncoder,StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+
 import sys
 
 
@@ -75,6 +77,14 @@ def sanity_checks(df):
         raise ValueError(f'Unexpected NaNs detected:\n{bad}')
     return True
 
+def split_train_test(X, y, test_size=0.3, random_state=42):
+    return train_test_split(
+        X, y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y
+    )
+
 
 def build_feature_matrix(df,verbose=True):
     df = df.copy()
@@ -101,7 +111,7 @@ def build_preprocessor():
     ])
 
 ##### Runner Function
-def process(path="fake_job_postings.csv", verbose=True):
+def process(path="fake_job_postings.csv", verbose=True, split=False, test_size=0.3, random_state=42):
     jobs = pd.read_csv(path)
     jobs_proc = build_feature_matrix(jobs)
     pre = build_preprocessor()
@@ -113,7 +123,16 @@ def process(path="fake_job_postings.csv", verbose=True):
         print(f'After preprocessing: {jobs_proc.shape}')
         print(f'Final feature matrix shape: {X.shape}')
 
-    return jobs_proc, X
+    if not split:
+        return jobs_proc, X
+
+    y = jobs_proc['fraudulent'].values
+
+    X_train, X_test, y_train, y_test = train_test_split_data(X, y,test_size=test_size,random_state=random_state)
+
+    return jobs_proc, X_train, X_test, y_train, y_test
+
+
 
 if __name__ == "__main__":
 

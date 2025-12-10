@@ -1,0 +1,28 @@
+name: fraud-anomaly
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+
+  # Core
+  - numpy
+  - pandas
+  - scipy
+
+  # ML
+  - scikit-learn
+  - hdbscan
+
+  # Visualization
+  - matplotlib
+  - seaborn
+  - wordcloud
+
+  # Needed so we can install pip-only packages
+  - pip
+
+  # Pip packages
+  - pip:
+      - tensorflow==2.15.0
+      - protobuf<5
