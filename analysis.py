@@ -2,7 +2,11 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+import seaborn as sns
+import hdbscan
+import os
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
 
 # =========================================================
 # Paths / constants
@@ -15,6 +19,11 @@ os.makedirs(FIG_DIR, exist_ok=True)
 # =========================================================
 # Tables
 # =========================================================
+
+def precision_at_k(y_true, scores, k):
+    idx = np.argsort(scores)[-k:]
+    return y_true[idx].mean()
+
 
 def fraud_enrichment_table(df):
     tbl = (
@@ -217,6 +226,108 @@ def plot_ranking_overlay(df, max_points=500):
     plt.savefig(os.path.join(FIG_DIR, "ranking_overlay.png"))
     plt.close()
 
+def plot_latent_space(
+    Z,
+    df,
+    color_col,
+    title,
+    fname,
+    cmap="viridis",
+    out_dir="fig"
+):
+    os.makedirs(out_dir, exist_ok=True)
+
+    Z_2d = PCA(n_components=2).fit_transform(Z)
+
+    plt.figure(figsize=(6, 5))
+    sc = plt.scatter(
+        Z_2d[:, 0],
+        Z_2d[:, 1],
+        c=df[color_col],
+        s=6,
+        cmap=cmap,
+        alpha=0.3
+    )
+
+    plt.xlabel("Latent PC 1")
+    plt.ylabel("Latent PC 2")
+    plt.title(title)
+    plt.colorbar(sc, label=color_col)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, fname))
+    plt.close()
+
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_fraud_capture_curve(
+    df,
+    score_col="final_anomaly_score",
+    label_col="fraudulent",
+    out_dir="fig",
+    fname="fraud_capture_curve.png"
+):
+    os.makedirs(out_dir, exist_ok=True)
+
+    df_sorted = df.sort_values(score_col, ascending=False)
+
+    y = df_sorted[label_col].values
+    cum_fraud = np.cumsum(y)
+    total_fraud = y.sum()
+
+    pct_inspected = np.arange(1, len(y)+1) / len(y)
+    pct_fraud_captured = cum_fraud / total_fraud
+
+    plt.figure(figsize=(6,5))
+    plt.plot(pct_inspected, pct_fraud_captured, label="Model", linewidth=2)
+    plt.plot([0,1], [0,1], linestyle="--", label="Random")
+
+    plt.xlabel("Fraction of jobs inspected")
+    plt.ylabel("Fraction of fraud captured")
+    plt.title("Fraud Capture Curve")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, fname))
+    plt.close()
+
+
+def plot_fraud_rate_by_bucket(
+    df,
+    score_col="final_anomaly_score",
+    label_col="fraudulent",
+    n_bins=10,
+    out_dir="fig",
+    fname="fraud_rate_by_bucket.png"
+):
+    os.makedirs(out_dir, exist_ok=True)
+
+    df = df.copy()
+    df["bucket"] = pd.qcut(df[score_col], q=n_bins, duplicates="drop")
+
+    bucket_rates = (
+        df.groupby("bucket", observed=False)[label_col]
+          .mean()
+          .reset_index()
+    )
+
+    plt.figure(figsize=(7,5))
+    sns.barplot(
+        data=bucket_rates,
+        x="bucket",
+        y=label_col
+    )
+
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Fraud rate")
+    plt.xlabel("Anomaly score bucket")
+    plt.title("Fraud Rate by Anomaly Score Bucket")
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, fname))
+    plt.close()
+
+
 
 # =========================================================
 # Main analysis
@@ -245,6 +356,26 @@ def analyze_results(results_csv, ensemble_percentile=95, top_k_anomalies=10):
 
     print("\n=== Cluster summary ===")
     print(cluster_summary_table(df))
+    jobs_proc=pd.read_csv("results/latent_vectors_with_metadata.csv")
+    plot_latent_space(
+        Z=jobs_proc.filter(like="z_").values,
+        df=jobs_proc,
+        color_col="final_anomaly_score",
+        title="Latent Space Colored by Anomaly Score",
+        fname="latent_space_anomaly_score.png",
+    )
+    plot_latent_space(
+    Z=jobs_proc.filter(like="z_").values,
+    df=jobs_proc,
+    color_col="fraudulent",
+    title="Latent Space Colored by Fraud Label",
+    cmap="coolwarm",
+    fname="latent_fraud.png")
+    plot_fraud_capture_curve(jobs_proc)
+    plot_fraud_rate_by_bucket(jobs_proc)
+
+
+
 
 
 # =========================================================
