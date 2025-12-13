@@ -31,7 +31,9 @@ def precision_at_k(y, scores, k):
 
 def recall_at_k(y_true, scores, k):
     idx = np.argsort(scores)[-k:]
-    return y_true[idx].sum() / y_true.sum()
+    denom = y_true.sum()
+    return 0.0 if denom == 0 else y_true[idx].sum() / denom
+
 
 
 # --------------------------------------------------
@@ -48,8 +50,7 @@ FAST_TUNING = {
         "n_components": [20, 50, 100],
     },
     "autoencoder": {
-        "latent_dim": [16, 32],
-        "hidden_dim": [64, 128],
+        "latent_dim": [16, 32]
     },
 }
 
@@ -59,9 +60,7 @@ FAST_TUNING = {
 # --------------------------------------------------
 def run_fast_tuning(data, out_dir):
     rows = []
-
-    # this will become the row-level output
-    df_data = data.copy()
+    df_data = data["jobs_proc"].copy()
 
     X_text = data["X_text"]
     X_struct = StandardScaler().fit_transform(data["X_struct"])
@@ -182,10 +181,9 @@ def run_fast_tuning(data, out_dir):
         print(f"  → Autoencoder | latent={ld}")
 
         ae, _ = build_autoencoder(
-            input_dim=X_struct.shape[1],
-            latent_dim=ld,
-            dropout_rate=0.2,
-        )
+        input_dim=X_struct.shape[1],
+        latent_dim=ld,
+    )
         ae.fit(
             X_struct,
             X_struct,
@@ -196,14 +194,13 @@ def run_fast_tuning(data, out_dir):
 
         err = compute_autoencoder_error(ae, X_struct)
 
-        col_name = f"anomaly_autoencoder_ld{ld}_hd{hd}"
+        col_name = f"anomaly_autoencoder_ld{ld}"
         df_data[col_name] = err
 
         rows.append({
             "modality": "structured",
             "model": "Autoencoder",
             "latent_dim": ld,
-            "hidden_dim": hd,
             "roc_auc": roc_auc_score(y, err),
             "ap": average_precision_score(y, err),
             "precision_at_500": precision_at_k(y, err, 500),
