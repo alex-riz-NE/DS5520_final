@@ -201,7 +201,7 @@ def build_tfidf_vectorizer(
     ngram_range=(1, 2),
 ):
     return TfidfVectorizer(
-        max_features=max_features,
+        #max_features=max_features,
         min_df=min_df,
         stop_words=stop_words,
         ngram_range=ngram_range,

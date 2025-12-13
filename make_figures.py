@@ -1,140 +1,193 @@
 import os
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA, TruncatedSVD
 
-# --------------------------------------------------
-# Paths
-# --------------------------------------------------
-RESULTS_DIR = "results/fast_tuning"
+from data_processing import process
+from density_anomaly import run_hdbscan_anomaly
+from reconstruction import (
+    build_autoencoder,
+    compute_autoencoder_error,
+    compute_pca_error,
+)
+
 FIG_DIR = "results/figures"
-
 os.makedirs(FIG_DIR, exist_ok=True)
+data = process("fake_job_postings.csv")
 
-RESULTS_PATH = os.path.join(RESULTS_DIR, "fast_tuning_results.csv")
-DATA_PATH = os.path.join(RESULTS_DIR, "data_with_anomaly_scores.csv")
+X_struct = StandardScaler().fit_transform(data["X_struct"])
+X_text = data["X_text"]
+y = data["y"]
 
+# PCA baseline
+PCA_RECON_DIM = 100
 
-# --------------------------------------------------
-# Load data
-# --------------------------------------------------
-results = pd.read_csv(RESULTS_PATH)
-data = pd.read_csv(DATA_PATH)
+# Structured HDBSCAN
+STRUCT_PCA_DIM = 20
+STRUCT_MCS = 30
+STRUCT_MS = 10
 
-y = data["fraudulent"].values  # adjust if label name differs
+# Text HDBSCAN
+TEXT_SVD_DIM = 150
+TEXT_MCS = 30
+TEXT_MS = 10
 
+# Autoencoder
+AE_LATENT_DIM = 16
 
-# ==================================================
-# FIGURE 1 — Precision@500 comparison (KEY RESULT)
-# ==================================================
-print("[1/3] Plotting Precision@500 comparison...")
-
-models = [
-    ("Structured HDBSCAN", "structured", "HDBSCAN", None),
-    ("PCA (100)", "structured", "PCA_recon", 100),
-    ("Autoencoder (32)", "structured", "Autoencoder", 32),
-    ("Text HDBSCAN", "text", "HDBSCAN", None),
-]
-
-rows = []
-
-for label, modality, model, param in models:
-    subset = results[
-        (results["modality"] == modality) &
-        (results["model"] == model)
-    ]
-
-    if model == "PCA_recon":
-        subset = subset[subset["n_components"] == param]
-    elif model == "Autoencoder":
-        subset = subset[subset["latent_dim"] == param]
-
-    rows.append({
-        "model": label,
-        "precision_at_500": subset["precision_at_500"].iloc[0],
-    })
-
-plot_df = pd.DataFrame(rows)
-
-plt.figure(figsize=(7, 4))
-plt.bar(plot_df["model"], plot_df["precision_at_500"])
-plt.ylabel("Precision@500")
-plt.title("Operational Precision Comparison")
-plt.xticks(rotation=15)
-plt.tight_layout()
-plt.savefig(os.path.join(FIG_DIR, "precision_at_500_comparison.png"))
-plt.close()
-
-
-# ==================================================
-# FIGURE 2 — Anomaly score distributions
-# (Structured HDBSCAN, best density model)
-# ==================================================
-print("[2/3] Plotting anomaly score distributions...")
-
-score_col = "anomaly_struct_hdbscan_mcs30_ms10"
-
-plt.figure(figsize=(7, 4))
-
-plt.hist(
-    data.loc[y == 0, score_col],
-    bins=50,
-    alpha=0.6,
-    label="Non-fraud",
+scores_pca, _, _, _ = compute_pca_error(
+    X_struct,
+    n_components=PCA_RECON_DIM,
 )
 
-plt.hist(
-    data.loc[y == 1, score_col],
-    bins=50,
-    alpha=0.6,
-    label="Fraud",
+X_struct_red = PCA(
+    n_components=STRUCT_PCA_DIM,
+    random_state=42,
+).fit_transform(X_struct)
+
+scores_struct, _ = run_hdbscan_anomaly(
+    X_struct_red,
+    min_cluster_size=STRUCT_MCS,
+    min_samples=STRUCT_MS,
+    metric="euclidean",
 )
 
-plt.xlabel("Anomaly score")
-plt.ylabel("Count")
-plt.title("Anomaly Score Distribution (Structured HDBSCAN)")
-plt.legend()
-plt.tight_layout()
-plt.savefig(os.path.join(FIG_DIR, "hdbscan_score_distribution.png"))
-plt.close()
+scores_struct = np.nan_to_num(scores_struct, nan=np.nanmin(scores_struct))
+X_text_red = TruncatedSVD(
+    n_components=TEXT_SVD_DIM,
+    random_state=42,
+).fit_transform(X_text)
+
+scores_text, _ = run_hdbscan_anomaly(
+    X_text_red,
+    min_cluster_size=TEXT_MCS,
+    min_samples=TEXT_MS,
+    metric="euclidean",
+)
+
+scores_text = np.nan_to_num(scores_text, nan=np.nanmin(scores_text))
 
 
-# ==================================================
-# FIGURE 3 — Precision@K curves
-# (Structured HDBSCAN vs PCA reconstruction)
-# ==================================================
-print("[3/3] Plotting Precision@K curves...")
+
+
+ae, _ = build_autoencoder(
+    input_dim=X_struct.shape[1],
+    latent_dim=AE_LATENT_DIM,
+)
+
+ae.fit(
+    X_struct,
+    X_struct,
+    epochs=8,
+    batch_size=256,
+    verbose=0,
+)
+
+scores_ae = compute_autoencoder_error(ae, X_struct)
+
+def precision_at_k(y, scores, k):
+    return y[np.argsort(scores)[-k:]].mean()
+
 
 def precision_at_k_curve(y, scores, ks):
     order = np.argsort(scores)[::-1]
     return [y[order[:k]].mean() for k in ks]
 
+fig, axes = plt.subplots(1, 3, figsize=(18, 4))
 
+
+
+# Precision@500
+labels = [
+    "PCA Baseline",
+    "Structured HDBSCAN",
+    "Text HDBSCAN",
+    "Autoencoder",
+]
+
+precisions = [
+    precision_at_k(y, scores_pca, 500),
+    precision_at_k(y, scores_struct, 500),
+    precision_at_k(y, scores_text, 500),
+    precision_at_k(y, scores_ae, 500),
+]
+
+axes[0].bar(labels, precisions)
+axes[0].set_ylabel("Precision@500")
+axes[0].set_title("A. Operational Precision")
+axes[0].tick_params(axis="x", rotation=20)
+bins = 50
+
+axes[1].hist(
+    scores_pca[y == 1],
+    bins=bins,
+    alpha=0.45,
+    label="PCA Reconstruction",
+)
+
+axes[1].hist(
+    scores_struct[y == 1],
+    bins=bins,
+    alpha=0.45,
+    label="Structured HDBSCAN",
+)
+
+axes[1].hist(
+    scores_text[y == 1],
+    bins=bins,
+    alpha=0.45,
+    label="Text HDBSCAN",
+)
+
+axes[1].hist(
+    scores_ae[y == 1],
+    bins=bins,
+    alpha=0.45,
+    label="Autoencoder",
+)
+
+axes[1].set_xlabel("Anomaly score")
+axes[1].set_ylabel("Count (Fraud only)")
+axes[1].set_title("B. Fraud Score Distributions")
+axes[1].legend()
+
+
+# --------------------------------------------------
+# Panel C — Precision@K curves
+# --------------------------------------------------
 ks = np.arange(50, 2000, 50)
 
-scores_hdb = data["anomaly_struct_hdbscan_mcs30_ms10"].values
-scores_pca = data["anomaly_pca_recon_100"].values
+axes[2].plot(
+    ks,
+    precision_at_k_curve(y, scores_pca, ks),
+    label="PCA Baseline",
+)
+axes[2].plot(
+    ks,
+    precision_at_k_curve(y, scores_struct, ks),
+    label="Structured HDBSCAN",
+)
+axes[2].plot(
+    ks,
+    precision_at_k_curve(y, scores_text, ks),
+    label="Text HDBSCAN",
+)
+axes[2].plot(
+    ks,
+    precision_at_k_curve(y, scores_ae, ks),
+    label="Autoencoder",
+)
 
-p_hdb = precision_at_k_curve(y, scores_hdb, ks)
-p_pca = precision_at_k_curve(y, scores_pca, ks)
+axes[2].set_xlabel("K")
+axes[2].set_ylabel("Precision@K")
+axes[2].set_title("C. Precision@K Curves")
+axes[2].legend()
 
-plt.figure(figsize=(7, 4))
-plt.plot(ks, p_hdb, label="Structured HDBSCAN")
-plt.plot(ks, p_pca, label="PCA Reconstruction (100)")
-plt.xlabel("K")
-plt.ylabel("Precision@K")
-plt.title("Precision@K Comparison")
-plt.legend()
 plt.tight_layout()
-plt.savefig(os.path.join(FIG_DIR, "precision_at_k_curve.png"))
+out_path = os.path.join(FIG_DIR, "combined_results_full.png")
+plt.savefig(out_path, dpi=300)
 plt.close()
 
-
-# --------------------------------------------------
-# Done
-# --------------------------------------------------
-print("\nSaved figures:")
-print("  → precision_at_500_comparison.png")
-print("  → hdbscan_score_distribution.png")
-print("  → precision_at_k_curve.png")
+print(f"Saved → {out_path}")
