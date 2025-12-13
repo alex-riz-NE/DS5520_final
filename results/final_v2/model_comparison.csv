@@ -1,0 +1,5 @@
+modality,algorithm,ari,silhouette,n_clusters,n_noise,mean_recon_error
+text,HDBSCAN,-0.016542786537970186,0.5939948336886375,144.0,10478.0,
+structured,HDBSCAN,0.00035707968336244633,0.3573243019228479,220.0,4444.0,
+structured,PCA_recon,,,,,0.4728141936993818
+structured,Autoencoder,,,,,0.11991496613116542
